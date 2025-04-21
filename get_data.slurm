@@ -11,7 +11,7 @@
 #SBATCH --error=%x_%j.err               # Standard error file
 
 # Activate the virtual enviroment
-source venv_mlproject
+source venv_mlproject/bin/activate
 
 # Run the Python script
-python download_data.py
+python /scripts/download_data.py
