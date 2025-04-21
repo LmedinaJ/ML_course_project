@@ -25,7 +25,7 @@ if not os.path.exists(catalog_path):
 
 print('done with download of data catalog')
 
-df = pd.read_csv('CATALOG.csv')
+df = pd.read_csv('data_csv/CATALOG.csv')
 random.seed(42)
 
 # # Parameters
@@ -95,7 +95,7 @@ ids_with_3_rows = ids_with_3_rows[ids_with_3_rows].index  # extract just the IDs
 df_with_3_rows = random_sampled_df[random_sampled_df['id'].isin(ids_with_3_rows)]
 order_download = df_with_3_rows['file_name'].value_counts().reset_index()#['file_name']
 
-# df_with_3_rows['time_utc'] = pd.to_datetime(df['time_utc'], format='%Y-%m-%d %H:%M:%S')
+df_with_3_rows['time_utc'] = pd.to_datetime(df['time_utc'], format='%Y-%m-%d %H:%M:%S')
 # df_with_3_rows.hist(  column='time_utc', bins=100, grid=False, figsize=(12,8), color='#86bf91', zorder=2)
 
 # ## here i just want to check how many records i have from 8 am to 4 pm a
@@ -175,59 +175,59 @@ data_2process = order_download['file_name']#][46:]
 # # for i in data_2process:
 # #   print(i)
 
-drivePath = 'data_h5/'
+drivePath = 'npz_files/'
 os.makedirs(drivePath, exist_ok=True)
 
 print(f'time start: {print_time_now()}')
 total_files = len(data_2process)
 start_time = time.time()
 # # for i in data_2process[0:1]:
-# for index, i in enumerate(data_2process, start=1):
-#   # files_left = total_files - index
-#   print(f'processing: {index}/{total_files} files')
-#   local_path = download_data(i)
+for index, i in enumerate(data_2process, start=1):
+  # files_left = total_files - index
+  print(f'processing: {index}/{total_files} files')
+  local_path = download_data(i)
 
-#   data_process = df_with_3_rows[df_with_3_rows['file_name']==i]
+  data_process = df_with_3_rows[df_with_3_rows['file_name']==i]
 
-#   for index, row in data_process.iterrows():
-#     weather_event = row['event_type'] if pd.notna(row['event_type']) else 'random'
-#     sensor        = row['img_type']
-#     file_index    = row['file_index']
-#     file_name     = row['file_name']
-#     event_id      = row['id']
-#     date          = row['time_utc']
-#     data_min      = row['data_min']
-#     data_max      = row['data_max']
+  for index, row in data_process.iterrows():
+    weather_event = row['event_type'] if pd.notna(row['event_type']) else 'random'
+    sensor        = row['img_type']
+    file_index    = row['file_index']
+    file_name     = row['file_name']
+    event_id      = row['id']
+    date          = row['time_utc']
+    data_min      = row['data_min']
+    data_max      = row['data_max']
 
-#     year          = file_name.split('_')[3]
-#     time_start    = file_name.split('_')[4]
-#     time_end      = file_name.split('_')[5].replace('.h5','')
+    year          = file_name.split('_')[3]
+    time_start    = file_name.split('_')[4]
+    time_end      = file_name.split('_')[5].replace('.h5','')
 
-#     #SEVIR_IR069_RANDOMEVENTS_2019_0101_0430.h5
+    #SEVIR_IR069_RANDOMEVENTS_2019_0101_0430.h5
 
-#     name_export = f"{event_id}_{sensor}_fi{file_index}_{weather_event.replace(' ', '')}_{year}_{time_start}_{time_end}"
-#     array_sensor = read_data(local_path, sensor, local_path, file_index)
+    name_export = f"{event_id}_{sensor}_fi{file_index}_{weather_event.replace(' ', '')}_{year}_{time_start}_{time_end}"
+    array_sensor = read_data(local_path, sensor, local_path, file_index)
 
-#     basePath = f"{drivePath}{name_export}"
+    basePath = f"{drivePath}{name_export}"
 
-#     # print('array_sensor \n',array_sensor)
-#     # print('array_sensor \n',name_export)
-#     if sensor == 'vis':
-#       np.savez(f'{basePath}.npz', vis=array_sensor)
-#     if sensor == 'ir069':
-#       np.savez(f'{basePath}.npz', ir069=array_sensor)
-#     if sensor == 'ir107':
-#       np.savez(f'{basePath}.npz', ir107=array_sensor)
+    # print('array_sensor \n',array_sensor)
+    # print('array_sensor \n',name_export)
+    if sensor == 'vis':
+      np.savez(f'{basePath}.npz', vis=array_sensor)
+    if sensor == 'ir069':
+      np.savez(f'{basePath}.npz', ir069=array_sensor)
+    if sensor == 'ir107':
+      np.savez(f'{basePath}.npz', ir107=array_sensor)
 
 
-#     # print(event_id)
-#     # print(file_name)
-#     # print(file_index)
-#     # print(sensor)
-#     # print(weather_event)
-#     # print('--'*3,'\n')
-#   print('\n')
-#   os.remove(local_path)
+    # print(event_id)
+    # print(file_name)
+    # print(file_index)
+    # print(sensor)
+    # print(weather_event)
+    # print('--'*3,'\n')
+  print('\n')
+  os.remove(local_path)
 
 print(f'--- processing time --- {(time.time() - start_time)/ 60}')
 print(f'time finish: {print_time_now()}')
