@@ -14,4 +14,4 @@
 source venv_mlproject/bin/activate
 
 # Run the Python script
-python /scripts/download_data.py
+python scripts/download_data.py
