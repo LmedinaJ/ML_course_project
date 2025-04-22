@@ -25,7 +25,7 @@ if not os.path.exists(catalog_path):
 
 print('done with download of data catalog')
 
-df = pd.read_csv('data_csv/CATALOG.csv')
+df = pd.read_csv('csv_data/CATALOG.csv')
 random.seed(42)
 
 # # Parameters
