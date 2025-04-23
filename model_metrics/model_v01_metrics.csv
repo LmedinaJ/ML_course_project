@@ -1,0 +1,2 @@
+model_version,pos_weight,learning_rate,batch_size,selected_modalities,best_val_f1,final_val_acc,final_val_precision,final_val_recall,test_acc,test_f1,test_precision,test_recall
+v01,1.7247956403269755,0.0002,8,"IR069,IR107",0.5933014354066986,0.4217687074829932,0.4217687074829932,1.0,0.4189189189189189,0.5904761904761905,0.4189189189189189,1.0
