@@ -8,6 +8,12 @@ import matplotlib.pyplot as plt
 import argparse
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
+df_stats = pd.read_csv("csv_data/npz_scaled_stats.csv")
+sensor_minmax = (
+    df_stats.groupby("sensor")[["min", "max"]]
+            .agg({"min": "min", "max": "max"})
+            .to_dict("index")
+)
 
 # Model definition (must match the one used for training)
 class CNNLSTMClassifier(nn.Module):
@@ -42,57 +48,64 @@ class CNNLSTMClassifier(nn.Module):
         h = torch.cat((h[0], h[1]), dim=1)  # Concatenate bidirectional outputs
         return self.head(h).squeeze(1)   # [B]
 
-
 # Dataset for inference
 class InferenceDataset(Dataset):
-    def __init__(self, file_paths, data_dir=None, channels=None):
+    def __init__(self, file_paths, data_dir=None, channels=None, sensor_stats=None):
         """
         Args:
-            file_paths: Either a list of file paths or a pandas DataFrame with a 'filename' column
-            data_dir: Directory containing the data files (if file_paths is a DataFrame or relative paths)
-            channels: List of channel indices to use
+            file_paths: List of .npz file paths or a DataFrame with 'filename' column
+            data_dir: Path to directory containing .npz files
+            channels: List of channels to load
+            sensor_stats: Dict of sensor -> {"min": float, "max": float}
         """
         if isinstance(file_paths, pd.DataFrame):
             self.file_paths = file_paths['filename'].tolist()
         else:
             self.file_paths = file_paths
-            
+
         self.data_dir = data_dir
-        self.channels = channels or [0, 1, 2]  # Default to first three channels
-        
+        self.channels = channels or [0, 1, 2]
+        self.sensor_stats = sensor_stats or {}
+
     def __len__(self):
         return len(self.file_paths)
-    
+
     def __getitem__(self, idx):
         file_path = self.file_paths[idx]
-        if self.data_dir:
-            file_path = os.path.join(self.data_dir, file_path)
-        
+        full_path = os.path.join(self.data_dir, file_path) if self.data_dir else file_path
         try:
-            # Load data
-            x = np.load(file_path)['data']  # [T,H,W,C]
+            x = np.load(full_path)['data']  # [T,H,W,C]
             
-            # Check if the data has enough channels
             if x.shape[3] < len(self.channels):
-                print(f"⚠️ Warning: File {file_path} has only {x.shape[3]} channels, but {len(self.channels)} were requested")
-                # Create a dummy array with the right number of channels
+                print(f"Warning: File {file_path} has {x.shape[3]} channels, expected {len(self.channels)}")
                 dummy = np.zeros((x.shape[0], x.shape[1], x.shape[2], len(self.channels)))
-                # Copy available channels
                 for i, channel_idx in enumerate(self.channels):
                     if channel_idx < x.shape[3]:
                         dummy[:, :, :, i] = x[:, :, :, channel_idx]
                 x = dummy
             else:
-                # Select the requested channels
-                x = x[:, :, :, self.channels]  # choose channels
-            
+                x = x[:, :, :, self.channels]
+
+            # Extract sensor name (assuming it's at the start of the filename, before the first "_")
+            sensor = os.path.basename(file_path).split("_")[0]
+            stats = self.sensor_stats.get(sensor)
+
+            if stats:
+                for i in range(len(self.channels)):
+                    x[:, :, :, i] = rescale_with_minmax(x[:, :, :, i], stats['min'], stats['max'])
+            else:
+                print(f"No stats found for sensor '{sensor}', skipping rescaling")
+
             x = torch.tensor(x.transpose(0, 3, 1, 2), dtype=torch.float32)  # [T,C,H,W]
             return x, file_path
         except Exception as e:
-            print(f"⚠️ Error loading {file_path}: {e}")
-            # Return a placeholder with the correct number of channels
+            print(f"Error loading {file_path}: {e}")
             return torch.zeros((1, len(self.channels), 1, 1)), file_path
 
+# Rescaling function
+def rescale_with_minmax(x, lo, hi, eps=1e-8):
+    rng = max(hi - lo, eps)
+    return np.clip((x - lo) / rng, 0.0, 1.0)
 
 def load_model(model_path, device='cuda'):
     """Load a trained model from a checkpoint file."""
@@ -103,11 +116,11 @@ def load_model(model_path, device='cuda'):
     channels = config.get('channels', [0, 1, 2])  # Default to first three channels
     
     # Print model info
-    print(f"📂 Loading model from: {model_path}")
-    print(f"   Trained until epoch: {checkpoint.get('epoch', 'unknown')}")
-    print(f"   Validation F1: {checkpoint.get('val_f1', 'unknown')}")
-    print(f"   Using channels: {channels}")
-    print(f"   Selected modalities: {config.get('selected_modalities', 'unknown')}")
+    print(f"Loading model from: {model_path}")
+    print(f"Trained until epoch: {checkpoint.get('epoch', 'unknown')}")
+    print(f"Validation F1: {checkpoint.get('val_f1', 'unknown')}")
+    print(f"Using channels: {channels}")
+    print(f"Selected modalities: {config.get('selected_modalities', 'unknown')}")
     
     # Initialize model with the right number of input channels
     model = CNNLSTMClassifier(in_channels=len(channels))
@@ -116,7 +129,6 @@ def load_model(model_path, device='cuda'):
     model.eval()
     
     return model, channels, checkpoint.get('config', {})
-
 
 def predict(model, dataloader, threshold=0.5, device='cuda'):
     """Run inference on data and return predictions."""
@@ -141,7 +153,6 @@ def predict(model, dataloader, threshold=0.5, device='cuda'):
                 })
     
     return pd.DataFrame(predictions)
-
 
 def visualize_predictions(df, output_dir=None):
     """Create visualizations for the predictions."""
@@ -191,7 +202,6 @@ def visualize_predictions(df, output_dir=None):
         else:
             plt.show()
 
-
 def main():
     parser = argparse.ArgumentParser(description='Run inference with trained model')
     parser.add_argument('--model_path', type=str, required=True, help='Path to the model checkpoint file')
@@ -211,37 +221,37 @@ def main():
     
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"🖥️ Using device: {device}")
+    print(f"Using device: {device}")
     
     # Load model
     model, channels, config = load_model(args.model_path, device)
     
     # Prepare file list for inference
     if args.input_csv:
-        print(f"📋 Loading file list from CSV: {args.input_csv}")
+        print(f"Loading file list from CSV: {args.input_csv}")
         df = pd.read_csv(args.input_csv)
         file_paths = df
     elif args.input_list:
-        print(f"📋 Loading file list from text file: {args.input_list}")
+        print(f"Loading file list from text file: {args.input_list}")
         with open(args.input_list, 'r') as f:
             file_paths = [line.strip() for line in f if line.strip()]
     else:
-        print(f"📂 Scanning directory for NPZ files: {args.data_dir}")
+        print(f"Scanning directory for NPZ files: {args.data_dir}")
         file_paths = [f for f in os.listdir(args.data_dir) if f.endswith('.npz')]
     
-    print(f"🔍 Found {len(file_paths)} files for inference")
+    print(f"Found {len(file_paths)} files for inference")
     
     # Create dataset and dataloader
-    dataset = InferenceDataset(file_paths, args.data_dir, channels)
+    dataset = InferenceDataset(file_paths, args.data_dir, channels, sensor_stats=sensor_minmax)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
     
     # Run inference
-    print(f"🧠 Running inference with threshold: {args.threshold}")
+    print(f"Running inference with threshold: {args.threshold}")
     predictions_df = predict(model, dataloader, args.threshold, device)
     
     # If ground truth is provided, merge it with predictions
     if args.ground_truth:
-        print(f"📊 Loading ground truth from: {args.ground_truth}")
+        print(f"Loading ground truth from: {args.ground_truth}")
         gt_df = pd.read_csv(args.ground_truth)
         predictions_df = predictions_df.merge(
             gt_df[['filename', 'label']], 
@@ -258,23 +268,22 @@ def main():
             'recall': recall_score(predictions_df['label'], predictions_df['prediction'])
         }
         
-        print("\n🎯 Evaluation metrics:")
+        print("\nEvaluation metrics:")
         for metric, value in metrics.items():
             print(f"   {metric}: {value:.4f}")
     
     # Save predictions
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     predictions_df.to_csv(args.output, index=False)
-    print(f"💾 Predictions saved to: {args.output}")
+    print(f"Predictions saved to: {args.output}")
     
     # Create visualizations
     if args.vis_dir:
         os.makedirs(args.vis_dir, exist_ok=True)
-        print(f"📊 Creating visualizations in: {args.vis_dir}")
+        print(f"Creating visualizations in: {args.vis_dir}")
         visualize_predictions(predictions_df, args.vis_dir)
     
-    print("✅ Inference completed successfully")
-
+    print("Inference completed successfully")
 
 if __name__ == "__main__":
     main()
