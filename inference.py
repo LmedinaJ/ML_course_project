@@ -86,15 +86,17 @@ class InferenceDataset(Dataset):
             else:
                 x = x[:, :, :, self.channels]
 
-            # Extract sensor name (assuming it's at the start of the filename, before the first "_")
-            sensor = os.path.basename(file_path).split("_")[0]
-            stats = self.sensor_stats.get(sensor)
-
-            if stats:
-                for i in range(len(self.channels)):
+            # Map channels to sensor names (assuming channels[0] = vis, channels[1] = ir069, channels[2] = ir107)
+            channel_sensor_map = {0: 'vis', 1: 'ir069', 2: 'ir107'}
+            
+            # Rescale each channel using its corresponding sensor stats
+            for i in range(len(self.channels)):
+                sensor = channel_sensor_map.get(i)
+                stats = self.sensor_stats.get(sensor)
+                if stats:
                     x[:, :, :, i] = rescale_with_minmax(x[:, :, :, i], stats['min'], stats['max'])
-            else:
-                print(f"No stats found for sensor '{sensor}', skipping rescaling")
+                else:
+                    print(f"Warning: No stats found for sensor '{sensor}' in channel {i}, skipping rescaling")
 
             x = torch.tensor(x.transpose(0, 3, 1, 2), dtype=torch.float32)  # [T,C,H,W]
             return x, file_path
