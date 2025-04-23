@@ -37,7 +37,7 @@ seed_everything()
 # ─────────────────────────────────────────────────────────────────────────────
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-model_version = f"v05_{timestamp}"
+model_version = f"v06_{timestamp}"
 MODEL_DIR = "model"
 METRIC_DIR = "model_metrics"
 LOG_DIR = "logs"
@@ -52,14 +52,17 @@ training_log = f"{LOG_DIR}/training_log_{model_version}.csv"
 learning_curves = f"{METRIC_DIR}/learning_curves_{model_version}.png"
 
 # fixed config
-labels_csv = "npz_files_stack/labels.csv"
-data_folder = "npz_files_stack"
+labels_csv = "npz_files_stack_3ch/labels.csv"
+data_folder = "npz_files_stack_3ch"
 batch_size = 8
 learning_rate = 2e-4
 max_epochs = 10
 patience = 7
-selected_modalities = ["IR069", "IR107"]
-channel_index = {"VIS": 0, "IR069": 0, "IR107": 1}  # dataset only has 2 channels
+
+# UPDATED: Changed to use three modalities
+selected_modalities = ["VIS", "IR069", "IR107"]  
+# UPDATED: Changed to map to three distinct channel indices
+channel_index = {"VIS": 0, "IR069": 1, "IR107": 2}  
 channels = [channel_index[m] for m in selected_modalities]
 
 # Print configuration summary
@@ -67,7 +70,7 @@ print("=" * 80)
 print(f"🚀 Starting training with configuration:")
 print(f"   Model version: {model_version}")
 print(f"   Batch size: {batch_size}, Learning rate: {learning_rate}")
-print(f"   Selected modalities: {selected_modalities}")
+print(f"   Selected modalities: {selected_modalities} (total channels: {len(channels)})")
 print(f"   Max epochs: {max_epochs}, Patience: {patience}")
 print("=" * 80)
 
@@ -90,7 +93,21 @@ class SequenceDataset(Dataset):
         
         try:
             x = np.load(file_path)['data']  # [T,H,W,C]
-            x = x[:, :, :, channels]  # choose channels
+            
+            # UPDATED: Check if the data has enough channels
+            if x.shape[3] < len(channels):
+                print(f"⚠️ Warning: File {file_path} has only {x.shape[3]} channels, but {len(channels)} were requested")
+                # Create a dummy array with the right number of channels
+                dummy = np.zeros((x.shape[0], x.shape[1], x.shape[2], len(channels)))
+                # Copy available channels
+                for i, channel_idx in enumerate(channels):
+                    if channel_idx < x.shape[3]:
+                        dummy[:, :, :, i] = x[:, :, :, channel_idx]
+                x = dummy
+            else:
+                # Select the requested channels
+                x = x[:, :, :, channels]  # choose channels
+            
             x = torch.tensor(x.transpose(0, 3, 1, 2), dtype=torch.float32)  # [T,C,H,W]
             
             if self.transform:
@@ -100,7 +117,7 @@ class SequenceDataset(Dataset):
             return x, y
         except Exception as e:
             print(f"⚠️ Error loading {file_path}: {e}")
-            # Return a placeholder and handle this case in training loop
+            # Return a placeholder with the correct number of channels
             return torch.zeros((1, len(channels), 1, 1)), torch.tensor(-1.0)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -281,6 +298,7 @@ def train_one_run(pos_weight_val: float):
     best threshold, and test metrics."""
     print(f"\n{'='*80}\n🏃‍♂️ Starting training run with pos_weight={pos_weight_val}\n{'='*80}")
     
+    # UPDATED: Now initializes with the correct number of input channels (3 instead of 2)
     model = CNNLSTMClassifier(in_channels=len(channels)).to(device)
     crit = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight_val]).to(device))
     opt = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
@@ -363,7 +381,7 @@ def train_one_run(pos_weight_val: float):
         
         # Update learning rate scheduler
         try:
-            sched.step(val_f1)
+            sched.step()  # StepLR doesn't take a metric parameter
         except Exception as e:
             print(f"⚠️ Warning: LR scheduler error: {e}")
         current_lr = opt.param_groups[0]['lr']

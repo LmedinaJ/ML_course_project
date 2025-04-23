@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=compute channel stacks  # Job name
+#SBATCH --job-name=train_model  # Job name
 #SBATCH --nodes=1                       # Run on a single node 
 #SBATCH --ntasks=1                       # Number of task (1 per GPU)
 #SBATCH --gres=gpu:1                    # Request 1 GPUs

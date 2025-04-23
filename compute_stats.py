@@ -1,37 +1,47 @@
 from glob import glob
-import pandas as pd
-import numpy as np
-import os
+import os, numpy as np, pandas as pd
 
-basePath = 'npz_files'
-files = glob(basePath+'/*.npz')
+BASE_DIR     = "npz_files"
+OUT_DIR      = "csv_data"
+os.makedirs(OUT_DIR, exist_ok=True)
+stats_path   = os.path.join(OUT_DIR, "npz_file_stats.csv")
 
-data_output = 'csv_data'
-stats_path = os.path.join(data_output, 'npz_file_stats.csv')
+rows = []
 
-stats_list = []
-
-for file_path in files:
+for fp in glob(os.path.join(BASE_DIR, "*.npz")):
     try:
-        with np.load(file_path) as npz:
-            keys = list(npz.keys())
-            if len(keys) != 1:
-                raise ValueError(f"Expected 1 array, got {len(keys)} in {file_path}")
-            data = npz[keys[0]]
-
-            stats_list.append({
-                'file_name': file_path.split('/')[-1],
-                'event_id': file_path.split('/')[-1].split('_')[0],
-                'sensor': file_path.split('/')[-1].split('_')[1],
-                'fi': file_path.split('/')[-1].split('_')[2],
-                'event': file_path.split('/')[-1].split('_')[3],
-                'min': np.min(data),
-                'max': np.max(data),
-                'mean': np.mean(data),
-                'std': np.std(data)
-            })
+        npz = np.load(fp)
     except Exception as e:
-        print(f"Error processing {file_path}: {e}")
+        print(f"⚠️  Could not open {fp}: {e}")
+        continue
 
-df_stats = pd.DataFrame(stats_list)
-df_stats.to_csv(stats_path,index=False)
+    # iterate over every array stored in the file
+    for key in npz.files:                       # .files is guaranteed order‑safe
+        data = npz[key]
+        fname = os.path.basename(fp)
+
+        # ---- file‑name tokens ------------------------------------------------
+        parts  = fname.split("_")
+        event_id = parts[0]                     # R1803… or S77… etc.
+        sensor   = parts[1]                     # ir069 / ir107 / vis …
+        fi       = parts[2]                     # fiXXX
+        event    = parts[3]                     # Flood / FlashFlood / random …
+
+        rows.append({
+            "file_name": fname,
+            "array_key": key,                   # keep track of which key
+            "event_id":  event_id,
+            "sensor":    sensor,
+            "fi":        fi,
+            "event":     event,
+            "min":  data.min().item(),
+            "max":  data.max().item(),
+            "mean": data.mean().item(),
+            "std":  data.std().item(),
+        })
+
+    npz.close()  # close the file handle
+
+df_stats = pd.DataFrame(rows)
+df_stats.to_csv(stats_path, index=False)
+print(f"✅ Stats written to {stats_path}  |  rows = {len(df_stats)}")

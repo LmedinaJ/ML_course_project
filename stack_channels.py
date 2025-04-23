@@ -1,9 +1,9 @@
 from collections import defaultdict
-# import torch.nn.functional as F
+import torch.nn.functional as F
 from glob import glob
 import pandas as pd
 import numpy as np
-# import torch
+import torch
 import time
 import os
 
@@ -24,19 +24,14 @@ for filepath in files:
     grouped_files[unique_id].append(filepath)
 
 
-df_stats = pd.read_csv('csv_data/npz_file_stats.csv')
+df_stats = pd.read_csv("csv_data/npz_scaled_stats.csv")
 
 
-sensor_stats = df_stats.groupby('sensor')[['min', 'max']].agg({
-    'min': 'min',
-    'max': 'max'
-}).reset_index()
-
-sensor_stats.to_csv('csv_data/sensor_global_min_max.csv',index=False)
-sensor_minmax = {
-    row['sensor']: {'min': row['min'], 'max': row['max']}
-    for _, row in sensor_stats.iterrows()
-}
+sensor_minmax = (
+    df_stats.groupby("sensor")[["min", "max"]]
+            .agg({"min": "min", "max": "max"})
+            .to_dict("index")
+)
 
 label_map = {
     'FlashFlood': 1,
@@ -50,18 +45,19 @@ label_map = {
 df_stats['label_yhat'] = df_stats['event'].map(label_map)
 
 
-def rescale_with_minmax(x, min_val, max_val):
-    return (x - min_val) / (max_val - min_val)
+def rescale_with_minmax(x, lo, hi, eps=1e-8):
+    rng = max(hi - lo, eps)
+    return np.clip((x - lo) / rng, 0.0, 1.0)
 
-# def resize_frames_gpu(frames, target_size=(192, 192)):
-#     """
-#     frames: numpy array of shape [T, H, W]
-#     returns: resized array of shape [T, target_H, target_W]
-#     """
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     frames_tensor = torch.tensor(frames, dtype=torch.float32).unsqueeze(1).to(device)  # [T, 1, H, W]
-#     frames_resized = F.interpolate(frames_tensor, size=target_size, mode='bilinear', align_corners=False)  # [T, 1, 192, 192]
-#     return frames_resized.squeeze(1).cpu().numpy()  # back to [T, 192, 192]
+def resize_frames_gpu(frames, target_size=(192, 192)):
+    """
+    frames: numpy array of shape [T, H, W]
+    returns: resized array of shape [T, target_H, target_W]
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    frames_tensor = torch.tensor(frames, dtype=torch.float32).unsqueeze(1).to(device)  # [T, 1, H, W]
+    frames_resized = F.interpolate(frames_tensor, size=target_size, mode='bilinear', align_corners=False)  # [T, 1, 192, 192]
+    return frames_resized.squeeze(1).cpu().numpy()  # back to [T, 192, 192]
 
 def stack_modalities_from_list(file_list, use_vis=False):
     files = {'vis': None, 'ir069': None, 'ir107': None}
@@ -75,14 +71,16 @@ def stack_modalities_from_list(file_list, use_vis=False):
             files['ir107'] = path
 
     # Load IR channels
-    ir069 = np.load(files['ir069'])['ir069']
-    ir107 = np.load(files['ir107'])['ir107']
+    SCALE = {"vis": 1.0e-4, "ir069": 1.0e-2, "ir107": 1.0e-2}
+
+    ir069 = np.load(files['ir069'])['ir069'].astype(np.float32) * SCALE["ir069"]
+    ir107 = np.load(files['ir107'])['ir107'].astype(np.float32) * SCALE["ir107"]
     ir069 = np.transpose(ir069, (2, 0, 1))
     ir107 = np.transpose(ir107, (2, 0, 1))
 
     # Optional: load and resize VIS channel
     if use_vis:
-        vis = np.load(files['vis'])['vis']
+        vis = np.load(files['vis'])['vis'].astype(np.float32) * SCALE["vis"]
         vis = np.transpose(vis, (2, 0, 1))
         vis_resized = resize_frames_gpu(vis, target_size=(192, 192))  # [T, 192, 192]
         vis_rescaled = rescale_with_minmax(
@@ -119,7 +117,7 @@ def stack_modalities_from_list(file_list, use_vis=False):
     return stacked
 
 # # Create a save directory
-save_dir = 'npz_files_stack/'
+save_dir = 'npz_files_stack_3ch/'
 os.makedirs(save_dir, exist_ok=True)
 
 start_time = time.time()
@@ -132,14 +130,29 @@ processed = 0
 
 # 👇 FIXED loop
 for event_id, event_channels in grouped_files.items():
-    try:
-        sequence = stack_modalities_from_list(event_channels, use_vis=False)
-        
-        filename = f"{event_id}.npz"
-        
-        path = os.path.join(save_dir, filename)
+    paths = {'vis': None, 'ir069': None, 'ir107': None}
+    for path in event_channels:
+        if '_vis_' in path:
+            paths['vis'] = path
+        elif '_ir069_' in path:
+            paths['ir069'] = path
+        elif '_ir107_' in path:
+            paths['ir107'] = path
 
-        
+    # Set this to True if you want to use VIS
+    use_vis = True
+
+    # Check required files
+    required_keys = ['ir069', 'ir107'] + (['vis'] if use_vis else [])
+    if not all(paths[k] for k in required_keys):
+        skipped += 1
+        continue
+
+    try:
+        sequence = stack_modalities_from_list(event_channels, use_vis=use_vis)
+
+        filename = f"{event_id}.npz"
+        path = os.path.join(save_dir, filename)
         np.savez_compressed(path, data=sequence)
 
         label = df_stats[df_stats['event_id'] == event_id]['label_yhat'].values[0]
